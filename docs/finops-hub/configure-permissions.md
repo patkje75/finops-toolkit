@@ -12,7 +12,7 @@ On this page:
 ## ✅ Requirements
 
 1. [Find your Azure Active Directory tenant id](https://learn.microsoft.com/en-us/azure/azure-portal/get-subscription-tenant-id#find-your-azure-ad-tenant).
-3. Find the Identity for the data factory.
+1. Find the Identity for the data factory.
     1. Open the Azure Portal and browse to the resource group where you deployed the FinOps toolkit.
     2. Select the Azure Data Factory resource.
     3. Select the **Managed identities** tab.
@@ -26,9 +26,14 @@ No special configuration is required at this time for MCA export scopes because 
 
 ## 🛠️ Enterprise agreement billing accounts and departments
 
-1.  [Find your enrollment (and department) Id](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/view-all-accounts#switch-billing-scope-in-the-azure-portal).
-2. Load the FinOps Toolkit PowerShell module.
-3. Grant reader permissions to the data factory
+1. [Find your enrollment (and department) Id](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/view-all-accounts#switch-billing-scope-in-the-azure-portal).
+2. [Create and authenticate your service principal](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#create-and-authenticate-your-service-principal)
+3. [Find your SPN and tenant ID](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#find-your-spn-and-tenant-id)
+4. [Assign enrollment account role permission to the SPN](https://learn.microsoft.com/en-us/azure/cost-management-billing/manage/assign-roles-azure-service-principals#assign-enrollment-account-role-permission-to-the-spn)
+
+<!--
+1. Load the FinOps Toolkit PowerShell module.
+2. Grant reader permissions to the data factory
 
    ````powershell
    # Grants enrollment reader permissions to the specified service principal or managed identity
@@ -43,6 +48,7 @@ No special configuration is required at this time for MCA export scopes because 
                               -DepartmentId 67890                              # Department Id
 
    ````
+-->
 
 <br>
 
