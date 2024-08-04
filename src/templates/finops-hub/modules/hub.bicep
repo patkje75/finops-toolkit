@@ -2,6 +2,11 @@
 // Licensed under the MIT License.
 
 //==============================================================================
+// Imports
+//==============================================================================
+import * as imports from 'types.bicep'
+
+//==============================================================================
 // Parameters
 //==============================================================================
 
@@ -41,6 +46,9 @@ param dsStorageAccountName string = '${toLower(hubName)}stgdsscripts'
 
 @description('Optional. To use Private Endpoints, add target subnet resource Id for the deployment scripts')
 param scriptsSubnetResourceId string = ''
+
+@description('Optional. Networking configuration for the hub.')
+param hubNetworkingOption imports.networkingOptionType
 
 //------------------------------------------------------------------------------
 // Variables
@@ -100,7 +108,7 @@ resource defaultTelemetry 'Microsoft.Resources/deployments@2022-09-01' = if (ena
       metadata: {
         _generator: {
           name: 'FinOps toolkit'
-          version: finOpsToolkitVersion
+          version: '0.2.1-rc.2'
         }
       }
       resources: []
@@ -115,7 +123,7 @@ resource defaultTelemetry 'Microsoft.Resources/deployments@2022-09-01' = if (ena
 // Create managed identity to upload files
 resource uploadFilesIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${storageAccountName}_blobManager'
-  tags: union(tags, contains(tagsByResource, 'Microsoft.ManagedIdentity/userAssignedIdentities') ? tagsByResource['Microsoft.ManagedIdentity/userAssignedIdentities'] : {})
+  tags: union(tags, tagsByResource[?'Microsoft.ManagedIdentity/userAssignedIdentities'] ?? {})
   location: location
 }
 
@@ -124,7 +132,7 @@ module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.8.3' = if(!
   params: {
     name: dsStorageAccountName
     skuName: 'Standard_LRS'
-    tags: union(tags, contains(tagsByResource, 'Microsoft.Storage/storageAccounts') ? tagsByResource['Microsoft.Storage/storageAccounts'] : {})
+    tags: union(tags, tagsByResource[?'Microsoft.Storage/storageAccounts'] ?? {})
     supportsHttpsTrafficOnly: true
     allowSharedKeyAccess: true
     roleAssignments: [
@@ -192,7 +200,7 @@ module storage 'storage.bicep' = {
 resource dataFactory 'Microsoft.DataFactory/factories@2018-06-01' = {
   name: dataFactoryName
   location: location
-  tags: union(resourceTags, contains(tagsByResource, 'Microsoft.DataFactory/factories') ? tagsByResource['Microsoft.DataFactory/factories'] : {})
+  tags: union(resourceTags, tagsByResource[?'Microsoft.DataFactory/factories'] ?? {})
   identity: { type: 'SystemAssigned' }
   properties: union(
     // Using union() to hide the error that gets surfaced because globalConfigurations is not in the ADF schema yet.
@@ -209,7 +217,7 @@ resource dataFactory 'Microsoft.DataFactory/factories@2018-06-01' = {
 // Create managed identity for data factory operations
 resource dataFactoryScriptsIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${storageAccountName}_triggerManager'
-  tags: union(tags, contains(tagsByResource, 'Microsoft.ManagedIdentity/userAssignedIdentities') ? tagsByResource['Microsoft.ManagedIdentity/userAssignedIdentities'] : {})
+  tags: union(tags, tagsByResource[?'Microsoft.ManagedIdentity/userAssignedIdentities'] ?? {})
   location: location
 }
 
@@ -313,3 +321,4 @@ output storageAccountName string = storage.outputs.name
 
 @description('URL to use when connecting custom Power BI reports to your data.')
 output storageUrlForPowerBI string = 'https://${storage.outputs.name}.dfs.${environment().suffixes.storage}/${storage.outputs.ingestionContainer}'
+

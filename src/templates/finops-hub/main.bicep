@@ -7,6 +7,8 @@
 
 targetScope = 'resourceGroup'
 
+import * as imports from 'modules/types.bicep'
+
 @description('Optional. Name of the hub. Used to ensure unique resource names. Default: "finops-hub".')
 param hubName string
 
@@ -35,6 +37,9 @@ param subnetResourceId string = ''
 @description('Optional. To use Private Endpoints, add target subnet resource Id for the deployment scripts')
 param scriptsSubnetResourceId string = ''
 
+@description('Optional. Networking configuration for the hub.')
+param hubNetworkingOption imports.networkingOptionType
+
 //==============================================================================
 // Resources
 //==============================================================================
@@ -48,8 +53,9 @@ module hub 'modules/hub.bicep' = {
     tags: tags
     tagsByResource: tagsByResource
     exportScopes: exportScopes
-    subnetResourceId: empty(subnetResourceId) ? '' : subnetResourceId
-    scriptsSubnetResourceId: empty(scriptsSubnetResourceId) ? '' : scriptsSubnetResourceId
+    //subnetResourceId: empty(subnetResourceId) ? '' : subnetResourceId
+    //scriptsSubnetResourceId: empty(scriptsSubnetResourceId) ? '' : scriptsSubnetResourceId
+    hubNetworkingOption: hubNetworkingOption
   }
 }
 
