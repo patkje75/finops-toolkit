@@ -47,6 +47,20 @@ param userAssignedManagedIdentityPrincipalId string
 @description('Optional. To use Private Endpoints, add target subnet for deployment scripts.')
 param scriptsSubnetResourceId string
 
+@description('Optional. To create networking resources.')
+@allowed([
+  'Public'
+  'Private'
+  'PrivateWithExistingNetwork'
+])
+param networkingOption string = 'Public'
+
+@description('Optional. Id of the scripts created subnet.')
+param newScriptsSubnetResourceId string
+
+@description('Optional. Id of the created subnet for private endpoints.')
+param newsubnetResourceId string
+
 //------------------------------------------------------------------------------
 // Variables
 //------------------------------------------------------------------------------
@@ -202,7 +216,7 @@ resource dataFactory 'Microsoft.DataFactory/factories@2018-06-01' existing = {
 // Delete old triggers and pipelines
 //------------------------------------------------------------------------------
 
-module deleteOldResources 'br/public:avm/res/resources/deployment-script:0.2.0' = {
+module deleteOldResources 'br/public:avm/res/resources/deployment-script:0.2.4' = {
   name: '${dataFactoryName}_deleteOldResources'
   dependsOn: [
     identityRoleAssignments
@@ -237,8 +251,9 @@ module deleteOldResources 'br/public:avm/res/resources/deployment-script:0.2.0' 
         }
       ]
     }
-    subnetResourceIds: empty(scriptsSubnetResourceId) ? [] : [scriptsSubnetResourceId]
-    storageAccountResourceId: empty(subnetResourceId) ? null : dsStorageAccountResourceId
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private ') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
+    storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
+
   }
 }
 
@@ -251,7 +266,7 @@ module deleteOldResources 'br/public:avm/res/resources/deployment-script:0.2.0' 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${dataFactoryName}_triggerManager'
   location: location
-  tags: union(tags, contains(tagsByResource, 'Microsoft.ManagedIdentity/userAssignedIdentities') ? tagsByResource['Microsoft.ManagedIdentity/userAssignedIdentities'] : {})
+  tags: union(tags, tagsByResource[?'Microsoft.ManagedIdentity/userAssignedIdentities'] ?? {})
 }
 
 // Assign access to the identity
@@ -277,9 +292,7 @@ module stopHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.0' = {
     kind: 'AzurePowerShell'
     tags: union(
       tags,
-      contains(tagsByResource, 'Microsoft.Resources/deploymentScripts')
-        ? tagsByResource['Microsoft.Resources/deploymentScripts']
-        : {}
+      tagsByResource[?'Microsoft.Resources/deploymentScripts'] ?? {}
     )
     azPowerShellVersion: '9.7'
     retentionInterval: 'PT1H'
@@ -311,8 +324,8 @@ module stopHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.0' = {
         userAssignedManagedIdentityResourceId
       ]
     }
-    subnetResourceIds: empty(scriptsSubnetResourceId) ? [] : [scriptsSubnetResourceId]
-    storageAccountResourceId: empty(subnetResourceId) ? null : dsStorageAccountResourceId
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private ') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
+    storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
   }
 }
 
@@ -954,7 +967,7 @@ resource pipeline_msexports_ETL_ingestion 'Microsoft.DataFactory/factories/pipel
 //------------------------------------------------------------------------------
 
 // Start hub triggers
-module startHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.0' = {
+module startHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.4' = {
   name: '${dataFactoryName}_startHubTriggers'
   dependsOn: [
     identityRoleAssignments
@@ -965,9 +978,7 @@ module startHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.0' = 
     location: location
     tags: union(
       tags,
-      contains(tagsByResource, 'Microsoft.Resources/deploymentScripts')
-        ? tagsByResource['Microsoft.Resources/deploymentScripts']
-        : {}
+      tagsByResource[?'Microsoft.Resources/deploymentScripts'] ?? {}
     )
     kind: 'AzurePowerShell'
     azPowerShellVersion: '9.7'
@@ -999,8 +1010,8 @@ module startHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.0' = 
         }
       ]
     }
-    subnetResourceIds: empty(scriptsSubnetResourceId) ? [] : [scriptsSubnetResourceId]
-    storageAccountResourceId: empty(subnetResourceId) ? null : dsStorageAccountResourceId
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private ') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
+    storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
   }
 }
 

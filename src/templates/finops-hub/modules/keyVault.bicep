@@ -36,6 +36,20 @@ param tagsByResource object = {}
 @description('Optional. To use Private Endpoints, add target subnet resource Id.')
 param subnetResourceId string = ''
 
+@description('Optional. To create networking resources.')
+@allowed([
+  'Public'
+  'Private'
+  'PrivateWithExistingNetwork'
+])
+param networkingOption string = 'Public'
+
+@description('Optional. Id of the scripts created subnet.')
+param newScriptsSubnetResourceId string
+
+@description('Optional. Id of the created subnet for private endpoints.')
+param newsubnetResourceId string
+
 //------------------------------------------------------------------------------
 // Variables
 //------------------------------------------------------------------------------
@@ -46,10 +60,10 @@ var keyVaultSuffix = '-${uniqueSuffix}'
 var keyVaultName = replace('${take(keyVaultPrefix, 24 - length(keyVaultSuffix))}${keyVaultSuffix}', '--', '-')
 
 var formattedAccessPolicies = [for accessPolicy in accessPolicies: {
-  applicationId: contains(accessPolicy, 'applicationId') ? accessPolicy.applicationId : ''
-  objectId: contains(accessPolicy, 'objectId') ? accessPolicy.objectId : ''
+  applicationId: accessPolicy.?applicationId ?? ''
+  objectId: accessPolicy.?objectId ?? ''
   permissions: accessPolicy.permissions
-  tenantId: contains(accessPolicy, 'tenantId') ? accessPolicy.tenantId : tenant().tenantId
+  tenantId: accessPolicy.?tenantId ?? tenant().tenantId
 }]
 
 //==============================================================================
@@ -59,7 +73,7 @@ var formattedAccessPolicies = [for accessPolicy in accessPolicies: {
 resource keyVault 'Microsoft.KeyVault/vaults@2022-11-01' = {
   name: keyVaultName
   location: location
-  tags: union(tags, contains(tagsByResource, 'Microsoft.KeyVault/vaults') ? tagsByResource['Microsoft.KeyVault/vaults'] : {})
+  tags: union(tags, tagsByResource[?'Microsoft.KeyVault/vaults'] ?? {})
   properties: {
     enabledForDeployment: true
     enabledForTemplateDeployment: true
@@ -70,7 +84,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2022-11-01' = {
     createMode: 'default'
     tenantId: subscription().tenantId
     accessPolicies: formattedAccessPolicies
-    publicNetworkAccess: !empty(subnetResourceId) ? 'Disabled' : 'Enabled'
+    publicNetworkAccess: (networkingOption != 'Public') ? 'Disabled' : 'Enabled'
     sku: {
       // chinaeast2 is the only region in China that supports deployment scripts
       name: startsWith(location, 'china') ? 'standard' : sku
@@ -104,7 +118,7 @@ resource keyVault_secrets 'Microsoft.KeyVault/vaults/secrets@2022-11-01' = {
   }
 }
 
-resource privateEndpointKeyVault 'Microsoft.Network/privateEndpoints@2022-05-01' = if (!empty(subnetResourceId))   {
+resource privateEndpointKeyVault 'Microsoft.Network/privateEndpoints@2022-05-01' = if(networkingOption != 'Public')   {
   name: 'pve-kv-${keyVault.name}'
   location: location
   properties: {
@@ -120,7 +134,7 @@ resource privateEndpointKeyVault 'Microsoft.Network/privateEndpoints@2022-05-01'
       }
     ]
     subnet: {
-      id: subnetResourceId
+      id:  networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : newsubnetResourceId
       properties: {
         privateEndpointNetworkPolicies: 'Enabled'
       }

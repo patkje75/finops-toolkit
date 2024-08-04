@@ -2,11 +2,6 @@
 // Licensed under the MIT License.
 
 //==============================================================================
-// Imports
-//==============================================================================
-import * as imports from 'types.bicep'
-
-//==============================================================================
 // Parameters
 //==============================================================================
 
@@ -38,17 +33,41 @@ param convertToParquet bool = true
 @description('Optional. Enable telemetry to track anonymous module usage trends, monitor for bugs, and improve future releases.')
 param enableDefaultTelemetry bool = true
 
-@description('Optional. To use Private Endpoints, add target subnet resource Id.')
+@description('Optional. Name of the FinOpsHub virtual network.')
+param networkName string = 'vnet-finops-hub'
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target subnet resource Id.')
 param subnetResourceId string = ''
 
 @description('Optional. Name of the Storage account for deployment scripts.')
 param dsStorageAccountName string = '${toLower(hubName)}stgdsscripts'
 
-@description('Optional. To use Private Endpoints, add target subnet resource Id for the deployment scripts')
+@description('Optional. To use Private Endpoints  in an existing virtual network, add target subnet resource Id for the deployment scripts')
 param scriptsSubnetResourceId string = ''
 
-@description('Optional. Networking configuration for the hub.')
-param hubNetworkingOption imports.networkingOptionType
+@description('Optional. To create networking resources.')
+@allowed([
+  'Public'
+  'Private'
+  'PrivateWithExistingNetwork'
+])
+param networkingOption string = 'Public'
+
+@description('Optional. Address prefix for the FinOpsHub virtual network.')
+param networkAddressPrefix string = '10.0.0.0/24'
+
+@description('Optional. Name of the FinOpsHub subnet.')
+param networkSubnetName string = 'subnet-finops-hub'
+
+@description('Optional. Address prefix for the created FinOpsHub subnet.')
+param networkSubnetPrefix string = cidrSubnet(networkAddressPrefix,24,0)
+
+@description('Optional. Name of the FinOpsHub scripts created subnet.')
+param scriptsSubnetName string = 'subnet-finops-hub-scripts'
+
+@description('Optional. Address prefix for the created scripts subnet.')
+param scriptsSubnetPrefix string = cidrSubnet(networkAddressPrefix,24,1)
+
 
 //------------------------------------------------------------------------------
 // Variables
@@ -108,7 +127,7 @@ resource defaultTelemetry 'Microsoft.Resources/deployments@2022-09-01' = if (ena
       metadata: {
         _generator: {
           name: 'FinOps toolkit'
-          version: '0.2.1-rc.2'
+          version: '0.2.1-rc.2'  /////// Revert
         }
       }
       resources: []
@@ -127,7 +146,7 @@ resource uploadFilesIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2
   location: location
 }
 
-module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.8.3' = if(!empty(subnetResourceId)){
+module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = if(networkingOption != 'Public' && !empty(subnetResourceId) && !empty(scriptsSubnetResourceId)) {
   name: dsStorageAccountName
   params: {
     name: dsStorageAccountName
@@ -157,12 +176,12 @@ module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.8.3' = if(!
         principalType: 'ServicePrincipal'
       }
     ]
-    networkAcls: empty(scriptsSubnetResourceId) ? null : {
+    networkAcls: (networkingOption == 'Public') ? null : {
       bypass: 'AzureServices'
       defaultAction: 'Deny'
       virtualNetworkRules: [
         {
-          id: scriptsSubnetResourceId
+          id: (networkingOption == 'PrivateWithExistingNetwork') ? scriptsSubnetResourceId : vnet.outputs.subnetResourceIds[1]
           action: 'Allow'
           state: 'Succeeded'
         }
@@ -190,6 +209,9 @@ module storage 'storage.bicep' = {
     userAssignedManagedIdentityResourceId: uploadFilesIdentity.id
     userAssignedManagedIdentityPrincipalId: uploadFilesIdentity.properties.principalId
     dsStorageAccountResourceId : empty(subnetResourceId) ? '' : dsStorageAccount.outputs.resourceId
+    networkingOption: networkingOption
+    newsubnetResourceId: vnet.outputs.subnetResourceIds[0]
+    newScriptsSubnetResourceId: vnet.outputs.subnetResourceIds[1]
   }
 }
 
@@ -210,7 +232,7 @@ resource dataFactory 'Microsoft.DataFactory/factories@2018-06-01' = {
       globalConfigurations: {
         PipelineBillingEnabled: 'true'
       }
-      publicNetworkAccess: !empty(subnetResourceId) ? 'Disabled' : 'Enabled'
+      publicNetworkAccess: (networkingOption != 'Public') ? 'Disabled' : 'Enabled'
     })
 }
 
@@ -238,6 +260,9 @@ module dataFactoryResources 'dataFactory.bicep' = {
     dsStorageAccountResourceId : empty(subnetResourceId) ? '' : dsStorageAccount.outputs.resourceId
     userAssignedManagedIdentityResourceId: dataFactoryScriptsIdentity.id
     userAssignedManagedIdentityPrincipalId: dataFactoryScriptsIdentity.properties.principalId
+    networkingOption: networkingOption
+    newsubnetResourceId: vnet.outputs.subnetResourceIds[0]
+    newScriptsSubnetResourceId: vnet.outputs.subnetResourceIds[1]
   }
 }
 
@@ -266,13 +291,58 @@ module keyVault 'keyVault.bicep' = {
         }
       }
     ]
+    networkingOption: networkingOption
+    newsubnetResourceId: vnet.outputs.subnetResourceIds[0]
+    newScriptsSubnetResourceId: vnet.outputs.subnetResourceIds[1]
   }
 }
+
+//------------------------------------------------------------------------------
+// Virtual network for private access
+//------------------------------------------------------------------------------
+
+module vnet 'br/public:avm/res/network/virtual-network:0.1.8' = if (networkingOption == 'Private') {
+  name: networkName
+  params: {
+    name: networkName
+    addressPrefixes: [
+      networkAddressPrefix
+    ]
+    location: location
+    tags: union(tags, tagsByResource[?'Microsoft.Network/virtualNetworks'] ?? {})
+    subnets: [
+      {
+        name: networkSubnetName
+        addressPrefix: networkSubnetPrefix
+      }
+      {
+        name: scriptsSubnetName
+        addressPrefix: scriptsSubnetPrefix
+        serviceEndpoints: [
+          {
+            service: 'Microsoft.Storage'
+          }
+        ]
+        delegations: [
+          {
+            name: 'Microsoft.ContainerInstance.containerGroups'
+            properties: {
+              serviceName: 'Microsoft.ContainerInstance/containerGroups'
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
+
+
+
 //------------------------------------------------------------------------------
 // Private Endpoints for ADF
 //------------------------------------------------------------------------------
 
-resource privateEndpointADF 'Microsoft.Network/privateEndpoints@2022-05-01' = [for (privateEndpoint,index) in adfPrivateEndpoints: if(!empty(subnetResourceId))   {
+resource privateEndpointADF 'Microsoft.Network/privateEndpoints@2022-05-01' = [for (privateEndpoint,index) in adfPrivateEndpoints: if(networkingOption != 'Public')  {
   name: 'pve-${privateEndpoint.name}-${dataFactory.name}'
   location: location
   properties: {
@@ -288,7 +358,7 @@ resource privateEndpointADF 'Microsoft.Network/privateEndpoints@2022-05-01' = [f
       }
     ]
     subnet: {
-      id: subnetResourceId
+      id: networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : vnet.outputs.subnetResourceIds[0]
       properties: {
         privateEndpointNetworkPolicies: 'Enabled'
       }
@@ -297,8 +367,41 @@ resource privateEndpointADF 'Microsoft.Network/privateEndpoints@2022-05-01' = [f
   }
 }]
 
+//------------------------------------------------------------------------------
+// Private DNS zones for ADF
+//------------------------------------------------------------------------------
 
+resource privateDNSZoneDataFactory 'Microsoft.Network/privateDnsZones@2020-06-01' = if(networkingOption == 'Private'){
+  name: 'privatelink.datafactory.azure.net'
+  location: 'global'
 
+  resource virtualNetworkLinks 'virtualNetworkLinks@2020-06-01' = {
+    name: '${vnet.name}-dataFactoryLink'
+    location: 'global'
+    properties: {
+      virtualNetwork: {
+        id: resourceId('Microsoft.Network/virtualNetworks', vnet.name)
+      }
+      registrationEnabled: false
+    }
+  }
+}
+
+resource privateDNSZoneDataFactoryPortal 'Microsoft.Network/privateDnsZones@2020-06-01' = if(networkingOption == 'Private'){
+  name: 'privatelink.adf.azure.com'
+  location: 'global'
+
+  resource virtualNetworkLinks 'virtualNetworkLinks@2020-06-01' = {
+    name: '${vnet.name}-dataFactoryPortalLink'
+    location: 'global'
+    properties: {
+      virtualNetwork: {
+        id: resourceId('Microsoft.Network/virtualNetworks', vnet.name)
+      }
+      registrationEnabled: true
+    }
+  }
+}
 
 //==============================================================================
 // Outputs
@@ -321,4 +424,3 @@ output storageAccountName string = storage.outputs.name
 
 @description('URL to use when connecting custom Power BI reports to your data.')
 output storageUrlForPowerBI string = 'https://${storage.outputs.name}.dfs.${environment().suffixes.storage}/${storage.outputs.ingestionContainer}'
-

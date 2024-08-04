@@ -45,6 +45,20 @@ param dsStorageAccountResourceId string
 @description('Optional. To use Private Endpoints, add target subnet resource Id for the deployment scripts')
 param scriptsSubnetResourceId string = ''
 
+@description('Optional. To create networking resources.')
+@allowed([
+  'Public'
+  'Private'
+  'PrivateWithExistingNetwork'
+])
+param networkingOption string = 'Public'
+
+@description('Optional. Id of the scripts created subnet.')
+param newScriptsSubnetResourceId string
+
+@description('Optional. Id of the created subnet for private endpoints.')
+param newsubnetResourceId string
+
 //------------------------------------------------------------------------------
 // Variables
 //------------------------------------------------------------------------------
@@ -58,17 +72,17 @@ var storageAccountName = '${take(safeHubName, 24 - length(storageAccountSuffix))
 // Resources
 //==============================================================================
 
-module storageAccount 'br/public:avm/res/storage/storage-account:0.8.3' = {
+module storageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = {
   name: storageAccountName
   params: {
     name: storageAccountName
     skuName: sku
     kind: 'BlockBlobStorage'
-    tags: union(tags, contains(tagsByResource, 'Microsoft.Storage/storageAccounts') ? tagsByResource['Microsoft.Storage/storageAccounts'] : {})
+    tags: union(tags, tagsByResource[?'Microsoft.Storage/storageAccounts'] ?? {})
     supportsHttpsTrafficOnly: true
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
-    publicNetworkAccess: empty(subnetResourceId) ? 'Enabled' : 'Disabled'
+    publicNetworkAccess: (networkingOption == 'Public') ? 'Enabled' : 'Disabled'
     enableHierarchicalNamespace: true
     blobServices: {
       containers: [
@@ -101,7 +115,7 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.8.3' = {
         principalType: 'ServicePrincipal'
       }
     ]
-    networkAcls: empty(scriptsSubnetResourceId) ? {
+    networkAcls: (networkingOption == 'Public') ? {
       defaultAction: 'Allow'
       bypass: 'AzureServices'
     } : {
@@ -109,7 +123,7 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.8.3' = {
       defaultAction: 'Deny'
       virtualNetworkRules: [
         {
-          id: scriptsSubnetResourceId
+          id: networkingOption == 'PrivateWithExistingNetwork' ? scriptsSubnetResourceId : newScriptsSubnetResourceId
           action: 'Allow'
           state: 'Succeeded'
         }
@@ -122,7 +136,7 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.8.3' = {
 // Private Endpoints
 //------------------------------------------------------------------------------
 
-resource privateEndpointBlob 'Microsoft.Network/privateEndpoints@2022-05-01' = if(!empty(subnetResourceId)){
+resource privateEndpointBlob 'Microsoft.Network/privateEndpoints@2022-05-01' = if(networkingOption != 'Public'){
   name: 'pve-blob-${storageAccount.name}'
   location: location
   properties: {
@@ -138,7 +152,7 @@ resource privateEndpointBlob 'Microsoft.Network/privateEndpoints@2022-05-01' = i
       }
     ]
     subnet: {
-      id: subnetResourceId
+      id: networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : newsubnetResourceId
       properties: {
         privateEndpointNetworkPolicies: 'Enabled'
       }
@@ -147,7 +161,7 @@ resource privateEndpointBlob 'Microsoft.Network/privateEndpoints@2022-05-01' = i
   }
 }
 
-resource privateEndpointDfs 'Microsoft.Network/privateEndpoints@2022-05-01' = if(!empty(subnetResourceId)){
+resource privateEndpointDfs 'Microsoft.Network/privateEndpoints@2022-05-01' = if(networkingOption != 'Public'){
   name: 'pve-dfs-${storageAccount.name}'
   location: location
   properties: {
@@ -163,7 +177,7 @@ resource privateEndpointDfs 'Microsoft.Network/privateEndpoints@2022-05-01' = if
       }
     ]
     subnet: {
-      id: subnetResourceId
+      id: networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : newsubnetResourceId
       properties: {
         privateEndpointNetworkPolicies: 'Enabled'
       }
@@ -177,13 +191,13 @@ resource privateEndpointDfs 'Microsoft.Network/privateEndpoints@2022-05-01' = if
 //------------------------------------------------------------------------------
 // Settings.json
 //------------------------------------------------------------------------------
-module uploadSettings 'br/public:avm/res/resources/deployment-script:0.2.0' = {
+module uploadSettings 'br/public:avm/res/resources/deployment-script:0.2.4' = {
   name: 'uploadSettings'
   params: {
     name: 'uploadSettings'
     kind: 'AzurePowerShell'
     location: startsWith(location, 'china') ? 'chinaeast2' : location
-    tags: union(tags, contains(tagsByResource, 'Microsoft.Resources/deploymentScripts') ? tagsByResource['Microsoft.Resources/deploymentScripts'] : {})
+    tags: union(tags, tagsByResource[?'Microsoft.Resources/deploymentScripts'] ?? {})
     managedIdentities: {
       userAssignedResourcesIds: [
         userAssignedManagedIdentityResourceId
@@ -212,8 +226,8 @@ module uploadSettings 'br/public:avm/res/resources/deployment-script:0.2.0' = {
       ]
     }
     scriptContent: loadTextContent('./scripts/Copy-FileToAzureBlob.ps1')
-    subnetResourceIds: empty(subnetResourceId) ? [] : [scriptsSubnetResourceId]
-    storageAccountResourceId: empty(subnetResourceId) ? null : dsStorageAccountResourceId
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private ') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
+    storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
   }
 }
 

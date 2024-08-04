@@ -7,8 +7,6 @@
 
 targetScope = 'resourceGroup'
 
-import * as imports from 'modules/types.bicep'
-
 @description('Optional. Name of the hub. Used to ensure unique resource names. Default: "finops-hub".')
 param hubName string
 
@@ -31,14 +29,39 @@ param tagsByResource object = {}
 @description('Optional. List of scope IDs to create exports for.')
 param exportScopes array = []
 
-@description('Optional. To use Private Endpoints, add target subnet resource Id.')
+@description('Optional. To use Private Endpoints in an existing virtual network, add target subnet resource Id.')
 param subnetResourceId string = ''
 
-@description('Optional. To use Private Endpoints, add target subnet resource Id for the deployment scripts')
+@description('Optional. To use Private Endpoints  in an existing virtual network, add target subnet resource Id for the deployment scripts')
 param scriptsSubnetResourceId string = ''
 
-@description('Optional. Networking configuration for the hub.')
-param hubNetworkingOption imports.networkingOptionType
+@description('Optional. To create networking resources.')
+@allowed([
+  'Public'
+  'Private'
+  'PrivateWithExistingNetwork'
+])
+param networkingOption string = 'Public'
+
+@description('Optional. Name of the FinOpsHub virtual network.')
+param networkName string = 'vnet-finops-hub'
+
+@description('Optional. Address prefix for the FinOpsHub virtual network.')
+param networkAddressPrefix string = '10.0.0.0/24'
+
+@description('Optional. Name of the FinOpsHub subnet.')
+param networkSubnetName string = 'subnet-finops-hub'
+
+@description('Optional. Address prefix for the FinOpsHub subnet.')
+param networkSubnetPrefix string = cidrSubnet(networkAddressPrefix,24,0)
+
+@description('Optional. Name of the FinOpsHub scripts subnet.')
+param scriptsSubnetName string = 'subnet-finops-hub-scripts'
+
+@description('Optional. Address prefix for the scripts subnet.')
+param scriptsSubnetPrefix string = cidrSubnet(networkAddressPrefix,24,1)
+
+
 
 //==============================================================================
 // Resources
@@ -53,9 +76,15 @@ module hub 'modules/hub.bicep' = {
     tags: tags
     tagsByResource: tagsByResource
     exportScopes: exportScopes
-    //subnetResourceId: empty(subnetResourceId) ? '' : subnetResourceId
-    //scriptsSubnetResourceId: empty(scriptsSubnetResourceId) ? '' : scriptsSubnetResourceId
-    hubNetworkingOption: hubNetworkingOption
+    subnetResourceId: empty(subnetResourceId) ? '' : subnetResourceId
+    scriptsSubnetResourceId: empty(scriptsSubnetResourceId) ? '' : scriptsSubnetResourceId
+    networkingOption: networkingOption
+    networkAddressPrefix: networkAddressPrefix
+    networkName: networkName
+    networkSubnetName: networkSubnetName
+    scriptsSubnetName: scriptsSubnetName
+    networkSubnetPrefix: networkSubnetPrefix
+    scriptsSubnetPrefix: scriptsSubnetPrefix
   }
 }
 
@@ -80,3 +109,13 @@ output storageAccountName string = hub.outputs.storageAccountName
 
 @description('URL to use when connecting custom Power BI reports to your data.')
 output storageUrlForPowerBI string = hub.outputs.storageUrlForPowerBI
+
+
+
+//==============================================================================
+// User-defined types
+//==============================================================================
+
+type networkingOptionType = {
+  networkingOptions: 'Public' | 'Private' | 'PrivateWithExistingNetwork'
+}
