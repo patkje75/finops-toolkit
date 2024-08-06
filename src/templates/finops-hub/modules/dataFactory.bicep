@@ -32,9 +32,6 @@ param tags object = {}
 @description('Optional. Tags to apply to resources based on their resource type. Resource type specific tags will be merged with tags for all resources.')
 param tagsByResource object = {}
 
-@description('Optional. To use Private Endpoints, add target subnet resource Id.')
-param subnetResourceId string = ''
-
 @description('Optional. The resource ID of the storage account to use for deployment scripts.')
 param dsStorageAccountResourceId string
 
@@ -56,10 +53,7 @@ param scriptsSubnetResourceId string
 param networkingOption string = 'Public'
 
 @description('Optional. Id of the scripts created subnet.')
-param newScriptsSubnetResourceId string
-
-@description('Optional. Id of the created subnet for private endpoints.')
-param newsubnetResourceId string
+param newScriptsSubnetResourceId string = ''
 
 //------------------------------------------------------------------------------
 // Variables
@@ -251,7 +245,7 @@ module deleteOldResources 'br/public:avm/res/resources/deployment-script:0.2.4' 
         }
       ]
     }
-    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private ') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
     storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
 
   }
@@ -324,7 +318,7 @@ module stopHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.0' = {
         userAssignedManagedIdentityResourceId
       ]
     }
-    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private ') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
     storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
   }
 }
@@ -1010,7 +1004,7 @@ module startHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.4' = 
         }
       ]
     }
-    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private ') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
     storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
   }
 }

@@ -54,10 +54,13 @@ param scriptsSubnetResourceId string = ''
 param networkingOption string = 'Public'
 
 @description('Optional. Id of the scripts created subnet.')
-param newScriptsSubnetResourceId string
+param newScriptsSubnetResourceId string = ''
 
 @description('Optional. Id of the created subnet for private endpoints.')
-param newsubnetResourceId string
+param newsubnetResourceId string = ''
+
+@description('Optional. Name of the virtual network.')
+param virtualNetworkName string = ''
 
 //------------------------------------------------------------------------------
 // Variables
@@ -115,15 +118,30 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = {
         principalType: 'ServicePrincipal'
       }
     ]
-    networkAcls: (networkingOption == 'Public') ? {
-      defaultAction: 'Allow'
-      bypass: 'AzureServices'
-    } : {
+    privateEndpoints: (networkingOption == 'Public' || networkingOption == 'Private') ? [] : [
+      {
+        service: 'blob'
+        name: 'pve-blob'
+        subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : newsubnetResourceId
+        privateDnsZoneResourceIds: (networkingOption != 'Public') ? [
+          privateBlobDNSZone.outputs.resourceId
+        ]: []
+      }
+      /*{
+        service: 'dfs'
+        name: 'pve-dfs'
+        subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : newsubnetResourceId
+        privateDnsZoneResourceIds: (networkingOption != 'Public') ? [
+          privateDFSDNSZone.outputs.resourceId
+        ]: []
+      }*/
+    ]
+    networkAcls: (networkingOption == 'Public') ? null : {
       bypass: 'AzureServices'
       defaultAction: 'Deny'
       virtualNetworkRules: [
         {
-          id: networkingOption == 'PrivateWithExistingNetwork' ? scriptsSubnetResourceId : newScriptsSubnetResourceId
+          id: (networkingOption == 'PrivateWithExistingNetwork') ? scriptsSubnetResourceId : newScriptsSubnetResourceId
           action: 'Allow'
           state: 'Succeeded'
         }
@@ -133,34 +151,40 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = {
 }
 
 //------------------------------------------------------------------------------
-// Private Endpoints
+// Private DNS zones
 //------------------------------------------------------------------------------
 
-resource privateEndpointBlob 'Microsoft.Network/privateEndpoints@2022-05-01' = if(networkingOption != 'Public'){
-  name: 'pve-blob-${storageAccount.name}'
-  location: location
-  properties: {
-
-    customNetworkInterfaceName: 'nic-blob-${storageAccount.name}'
-    privateLinkServiceConnections: [
+module privateBlobDNSZone 'br/public:avm/res/network/private-dns-zone:0.5.0' = if(networkingOption == 'Private'){
+  name: 'blobDnsZone'
+  params: {
+    name: 'privatelink.blob.${environment().suffixes.storage}'
+    location: 'global'
+    virtualNetworkLinks: [
       {
-        name: 'pve-blob-${storageAccount.name}'
-        properties: {
-          privateLinkServiceId: storageAccount.outputs.resourceId
-          groupIds: ['blob']
-        }
+        virtualNetworkResourceId: resourceId('Microsoft.Network/virtualNetworks', virtualNetworkName)
+        registrationEnabled: false
       }
     ]
-    subnet: {
-      id: networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : newsubnetResourceId
-      properties: {
-        privateEndpointNetworkPolicies: 'Enabled'
-      }
-
-    }
   }
 }
 
+/*
+module privateDFSDNSZone 'br/public:avm/res/network/private-dns-zone:0.5.0' = if(networkingOption == 'Private'){
+  name: 'dfsDnsZone'
+  params: {
+    name: 'privatelink.dfs.${environment().suffixes.storage}'
+    location: 'global'
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: resourceId('Microsoft.Network/virtualNetworks', virtualNetworkName)
+        registrationEnabled: false
+      }
+    ]
+  }
+}
+  */
+
+/*
 resource privateEndpointDfs 'Microsoft.Network/privateEndpoints@2022-05-01' = if(networkingOption != 'Public'){
   name: 'pve-dfs-${storageAccount.name}'
   location: location
@@ -177,7 +201,7 @@ resource privateEndpointDfs 'Microsoft.Network/privateEndpoints@2022-05-01' = if
       }
     ]
     subnet: {
-      id: networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : newsubnetResourceId
+      id: networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : (networkingOption == 'Private') ? newsubnetResourceId : null
       properties: {
         privateEndpointNetworkPolicies: 'Enabled'
       }
@@ -185,7 +209,7 @@ resource privateEndpointDfs 'Microsoft.Network/privateEndpoints@2022-05-01' = if
     }
   }
 }
-
+*/
 
 
 //------------------------------------------------------------------------------
@@ -226,7 +250,7 @@ module uploadSettings 'br/public:avm/res/resources/deployment-script:0.2.4' = {
       ]
     }
     scriptContent: loadTextContent('./scripts/Copy-FileToAzureBlob.ps1')
-    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private ') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private') ? [newScriptsSubnetResourceId] : (networkingOption == 'PrivateWithExistingNetwork') ? [scriptsSubnetResourceId] : []
     storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
   }
 }

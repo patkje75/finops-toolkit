@@ -44,11 +44,8 @@ param subnetResourceId string = ''
 ])
 param networkingOption string = 'Public'
 
-@description('Optional. Id of the scripts created subnet.')
-param newScriptsSubnetResourceId string
-
 @description('Optional. Id of the created subnet for private endpoints.')
-param newsubnetResourceId string
+param newsubnetResourceId string = ''
 
 //------------------------------------------------------------------------------
 // Variables

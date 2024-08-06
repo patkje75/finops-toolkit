@@ -127,7 +127,7 @@ resource defaultTelemetry 'Microsoft.Resources/deployments@2022-09-01' = if (ena
       metadata: {
         _generator: {
           name: 'FinOps toolkit'
-          version: '0.2.1-rc.2'  /////// Revert
+          version: '0.4'  /////// Revert
         }
       }
       resources: []
@@ -146,7 +146,7 @@ resource uploadFilesIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2
   location: location
 }
 
-module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = if(networkingOption != 'Public' && !empty(subnetResourceId) && !empty(scriptsSubnetResourceId)) {
+module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = if(networkingOption != 'Public') {
   name: dsStorageAccountName
   params: {
     name: dsStorageAccountName
@@ -176,12 +176,12 @@ module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = if(
         principalType: 'ServicePrincipal'
       }
     ]
-    networkAcls: (networkingOption == 'Public') ? null : {
+    networkAcls: {
       bypass: 'AzureServices'
       defaultAction: 'Deny'
       virtualNetworkRules: [
         {
-          id: (networkingOption == 'PrivateWithExistingNetwork') ? scriptsSubnetResourceId : vnet.outputs.subnetResourceIds[1]
+          id: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[1] : scriptsSubnetResourceId
           action: 'Allow'
           state: 'Succeeded'
         }
@@ -208,10 +208,11 @@ module storage 'storage.bicep' = {
     scriptsSubnetResourceId: scriptsSubnetResourceId
     userAssignedManagedIdentityResourceId: uploadFilesIdentity.id
     userAssignedManagedIdentityPrincipalId: uploadFilesIdentity.properties.principalId
-    dsStorageAccountResourceId : empty(subnetResourceId) ? '' : dsStorageAccount.outputs.resourceId
+    dsStorageAccountResourceId : (networkingOption == 'Public') ? '' : dsStorageAccount.outputs.resourceId
     networkingOption: networkingOption
-    newsubnetResourceId: vnet.outputs.subnetResourceIds[0]
-    newScriptsSubnetResourceId: vnet.outputs.subnetResourceIds[1]
+    newsubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : null
+    newScriptsSubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[1] : null
+    virtualNetworkName: (networkingOption == 'Private') ? vnet.name : null
   }
 }
 
@@ -255,14 +256,12 @@ module dataFactoryResources 'dataFactory.bicep' = {
     location: location
     tags: resourceTags
     tagsByResource: tagsByResource
-    subnetResourceId: subnetResourceId
     scriptsSubnetResourceId: scriptsSubnetResourceId
-    dsStorageAccountResourceId : empty(subnetResourceId) ? '' : dsStorageAccount.outputs.resourceId
+    dsStorageAccountResourceId : (networkingOption == 'Public') ? '' : dsStorageAccount.outputs.resourceId
     userAssignedManagedIdentityResourceId: dataFactoryScriptsIdentity.id
     userAssignedManagedIdentityPrincipalId: dataFactoryScriptsIdentity.properties.principalId
     networkingOption: networkingOption
-    newsubnetResourceId: vnet.outputs.subnetResourceIds[0]
-    newScriptsSubnetResourceId: vnet.outputs.subnetResourceIds[1]
+    newScriptsSubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[1] : null
   }
 }
 
@@ -279,7 +278,7 @@ module keyVault 'keyVault.bicep' = {
     tags: resourceTags
     tagsByResource: tagsByResource
     storageAccountName: storage.outputs.name
-    subnetResourceId:!empty(subnetResourceId) ? subnetResourceId : ''
+    subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? scriptsSubnetResourceId : (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : ''
     accessPolicies: [
       {
         objectId: dataFactory.identity.principalId
@@ -292,9 +291,8 @@ module keyVault 'keyVault.bicep' = {
       }
     ]
     networkingOption: networkingOption
-    newsubnetResourceId: vnet.outputs.subnetResourceIds[0]
-    newScriptsSubnetResourceId: vnet.outputs.subnetResourceIds[1]
-  }
+    newsubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : null
+    }
 }
 
 //------------------------------------------------------------------------------
@@ -358,7 +356,7 @@ resource privateEndpointADF 'Microsoft.Network/privateEndpoints@2022-05-01' = [f
       }
     ]
     subnet: {
-      id: networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : vnet.outputs.subnetResourceIds[0]
+      id: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : null
       properties: {
         privateEndpointNetworkPolicies: 'Enabled'
       }
@@ -371,35 +369,31 @@ resource privateEndpointADF 'Microsoft.Network/privateEndpoints@2022-05-01' = [f
 // Private DNS zones for ADF
 //------------------------------------------------------------------------------
 
-resource privateDNSZoneDataFactory 'Microsoft.Network/privateDnsZones@2020-06-01' = if(networkingOption == 'Private'){
-  name: 'privatelink.datafactory.azure.net'
-  location: 'global'
-
-  resource virtualNetworkLinks 'virtualNetworkLinks@2020-06-01' = {
-    name: '${vnet.name}-dataFactoryLink'
+module privateDNSZoneDataFactory 'br/public:avm/res/network/private-dns-zone:0.5.0' = if(networkingOption == 'Private'){
+  name: 'dataFactoryDnsZone'
+  params: {
+    name: 'privatelink.datafactory.azure.net'
     location: 'global'
-    properties: {
-      virtualNetwork: {
-        id: resourceId('Microsoft.Network/virtualNetworks', vnet.name)
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: resourceId('Microsoft.Network/virtualNetworks', networkName)
+        registrationEnabled: false
       }
-      registrationEnabled: false
-    }
+    ]
   }
 }
 
-resource privateDNSZoneDataFactoryPortal 'Microsoft.Network/privateDnsZones@2020-06-01' = if(networkingOption == 'Private'){
-  name: 'privatelink.adf.azure.com'
-  location: 'global'
-
-  resource virtualNetworkLinks 'virtualNetworkLinks@2020-06-01' = {
-    name: '${vnet.name}-dataFactoryPortalLink'
+module privateDNSZoneDataFactoryPortal 'br/public:avm/res/network/private-dns-zone:0.5.0' = if(networkingOption == 'Private'){
+  name: 'dataFactoryPortalDnsZone'
+  params: {
+    name: 'privatelink.adf.azure.com'
     location: 'global'
-    properties: {
-      virtualNetwork: {
-        id: resourceId('Microsoft.Network/virtualNetworks', vnet.name)
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: resourceId('Microsoft.Network/virtualNetworks', networkName)
+        registrationEnabled: false
       }
-      registrationEnabled: true
-    }
+    ]
   }
 }
 

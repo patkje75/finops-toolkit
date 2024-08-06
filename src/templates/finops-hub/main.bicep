@@ -53,13 +53,13 @@ param networkAddressPrefix string = '10.0.0.0/24'
 param networkSubnetName string = 'subnet-finops-hub'
 
 @description('Optional. Address prefix for the FinOpsHub subnet.')
-param networkSubnetPrefix string = cidrSubnet(networkAddressPrefix,24,0)
+param networkSubnetPrefix string = cidrSubnet(networkAddressPrefix,25,0)
 
 @description('Optional. Name of the FinOpsHub scripts subnet.')
 param scriptsSubnetName string = 'subnet-finops-hub-scripts'
 
 @description('Optional. Address prefix for the scripts subnet.')
-param scriptsSubnetPrefix string = cidrSubnet(networkAddressPrefix,24,1)
+param scriptsSubnetPrefix string = cidrSubnet(networkAddressPrefix,25,1)
 
 
 
@@ -76,8 +76,8 @@ module hub 'modules/hub.bicep' = {
     tags: tags
     tagsByResource: tagsByResource
     exportScopes: exportScopes
-    subnetResourceId: empty(subnetResourceId) ? '' : subnetResourceId
-    scriptsSubnetResourceId: empty(scriptsSubnetResourceId) ? '' : scriptsSubnetResourceId
+    subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : ''
+    scriptsSubnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? scriptsSubnetResourceId : ''
     networkingOption: networkingOption
     networkAddressPrefix: networkAddressPrefix
     networkName: networkName
@@ -109,13 +109,3 @@ output storageAccountName string = hub.outputs.storageAccountName
 
 @description('URL to use when connecting custom Power BI reports to your data.')
 output storageUrlForPowerBI string = hub.outputs.storageUrlForPowerBI
-
-
-
-//==============================================================================
-// User-defined types
-//==============================================================================
-
-type networkingOptionType = {
-  networkingOptions: 'Public' | 'Private' | 'PrivateWithExistingNetwork'
-}
