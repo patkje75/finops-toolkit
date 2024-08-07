@@ -49,16 +49,17 @@ param subnetResourceId string = ''
 param scriptsSubnetResourceId string = ''
 
 @description('Optional. To use Private Endpoints in an existing virtual network, add target blob storage account private DNS zone resource Id.')
-param blobPrivateDNSZoneName string = ''
+param blobPrivateDNSZoneName string = 'privatelink.blob.${environment().suffixes.storage}'
 
 @description('Optional. To use Private Endpoints in an existing virtual network, add target ADF private DNS zone resource Id.')
-param ADFprivateDNSZoneName string = ''
+param ADFprivateDNSZoneName string = 'privatelink.datafactory.azure.net'
 
 @description('Optional. To use Private Endpoints in an existing virtual network, add target ADF Poral private DNS zone resource Id.')
-param ADFPoralPrivateDNSZoneName string = ''
+param ADFPoralPrivateDNSZoneName string = 'privatelink.adf.azure.com'
 
 @description('Optional. To use Private Endpoints in an existing virtual network, add target KeyVault private DNS zone resource Id.')
-param keyVaultPrivateDNSZoneName string = ''
+param keyVaultPrivateDNSZoneName string = 'privatelink.vaultcore.azure.net'
+
 
 @description('Optional. To use Private Endpoints in an existing virtual network, add target private DNS zones resource group name.')
 param privateDNSZonesResourceGroupName string = ''
