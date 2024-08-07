@@ -47,6 +47,15 @@ param networkingOption string = 'Public'
 @description('Optional. Id of the created subnet for private endpoints.')
 param newsubnetResourceId string = ''
 
+@description('Optional. To use Private Endpoints in an existing virtual network, add target KeyVault private DNS zone resource Id.')
+param keyVaultPrivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target private DNS zones resource group name.')
+param privateDNSZonesResourceGroupName string = ''
+
+@description('Optional. Name of the virtual network.')
+param virtualNetworkName string = ''
+
 //------------------------------------------------------------------------------
 // Variables
 //------------------------------------------------------------------------------
@@ -56,45 +65,66 @@ var keyVaultPrefix = '${replace(hubName, '_', '-')}-vault'
 var keyVaultSuffix = '-${uniqueSuffix}'
 var keyVaultName = replace('${take(keyVaultPrefix, 24 - length(keyVaultSuffix))}${keyVaultSuffix}', '--', '-')
 
-var formattedAccessPolicies = [for accessPolicy in accessPolicies: {
-  applicationId: accessPolicy.?applicationId ?? ''
-  objectId: accessPolicy.?objectId ?? ''
-  permissions: accessPolicy.permissions
-  tenantId: accessPolicy.?tenantId ?? tenant().tenantId
-}]
-
 //==============================================================================
 // Resources
 //==============================================================================
-
-resource keyVault 'Microsoft.KeyVault/vaults@2022-11-01' = {
+module keyVault 'br/public:avm/res/key-vault/vault:0.7.0' = {
   name: keyVaultName
-  location: location
-  tags: union(tags, tagsByResource[?'Microsoft.KeyVault/vaults'] ?? {})
-  properties: {
-    enabledForDeployment: true
-    enabledForTemplateDeployment: true
-    enabledForDiskEncryption: true
+  params: {
+    name: keyVaultName
+    location: location
+    tags: union(tags, tagsByResource[?'Microsoft.KeyVault/vaults'] ?? {})
+    enableVaultForDeployment: true
     enableSoftDelete: true
     softDeleteRetentionInDays: 90
     enableRbacAuthorization: false
     createMode: 'default'
-    tenantId: subscription().tenantId
-    accessPolicies: formattedAccessPolicies
     publicNetworkAccess: (networkingOption != 'Public') ? 'Disabled' : 'Enabled'
-    sku: {
-      // chinaeast2 is the only region in China that supports deployment scripts
-      name: startsWith(location, 'china') ? 'standard' : sku
-      family: 'A'
-    }
+    sku: startsWith(location, 'china') ? 'standard' : sku
+    accessPolicies: accessPolicies
+    secrets: [
+      {
+        name: storageRef.name
+        attributes: {
+          enabled: true
+          exp: 1702648632
+          nbf: 10000
+        }
+        value: storageRef.listKeys().keys[0].value
+      }
+    ]
+    privateEndpoints: (networkingOption == 'Public') ? null : [
+      {
+        service: 'vault'
+        name: 'pve-kv'
+        subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : newsubnetResourceId
+        privateDnsZoneResourceIds: (networkingOption == 'Private') ? [
+          privateDNSZoneKeyVault.outputs.resourceId
+        ]
+        : (networkingOption == 'PrivateWithExistingNetwork') ? [keyVaultPrivateDNSZone.id]
+        :[]
+        privateDnsZoneGroupName: (networkingOption == 'Private') ? keyVaultPrivateDNSZone.name : (networkingOption == 'PrivateWithExistingNetwork') ? keyVaultPrivateDNSZone.name : null
+      }
+    ]
   }
 }
 
-resource keyVault_accessPolicies 'Microsoft.KeyVault/vaults/accessPolicies@2022-11-01' = if (!empty(accessPolicies)) {
-  name: 'add'
-  parent: keyVault
-  properties: {
-    accessPolicies: formattedAccessPolicies
+resource keyVaultPrivateDNSZone 'Microsoft.Network/privateDnsZones@2020-06-01' existing = if(networkingOption == 'PrivateWithExistingNetwork') {
+  name: keyVaultPrivateDNSZoneName
+  scope: resourceGroup(privateDNSZonesResourceGroupName)
+}
+
+module privateDNSZoneKeyVault 'br/public:avm/res/network/private-dns-zone:0.5.0' = if(networkingOption == 'Private'){
+  name: 'keyVaultDnsZone'
+  params: {
+    name: 'privatelink.vaultcore.azure.net'
+    location: 'global'
+    virtualNetworkLinks: [
+      {
+        virtualNetworkResourceId: resourceId('Microsoft.Network/virtualNetworks', virtualNetworkName )
+        registrationEnabled: false
+      }
+    ]
   }
 }
 
@@ -102,54 +132,15 @@ resource storageRef 'Microsoft.Storage/storageAccounts@2022-09-01' existing = {
   name: storageAccountName
 }
 
-resource keyVault_secrets 'Microsoft.KeyVault/vaults/secrets@2022-11-01' = {
-  name: storageRef.name
-  parent: keyVault
-  properties: {
-    attributes: {
-      enabled: true
-      exp: 1702648632
-      nbf: 10000
-    }
-    value: storageRef.listKeys().keys[0].value
-  }
-}
-
-resource privateEndpointKeyVault 'Microsoft.Network/privateEndpoints@2022-05-01' = if(networkingOption != 'Public')   {
-  name: 'pve-kv-${keyVault.name}'
-  location: location
-  properties: {
-
-    customNetworkInterfaceName: 'nic-kv-${keyVault.name}'
-    privateLinkServiceConnections: [
-      {
-        name: 'pve-kv-${keyVault.name}'
-        properties: {
-          privateLinkServiceId: keyVault.id
-          groupIds: ['vault']
-        }
-      }
-    ]
-    subnet: {
-      id:  networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : newsubnetResourceId
-      properties: {
-        privateEndpointNetworkPolicies: 'Enabled'
-      }
-
-    }
-  }
-}
-
-
 //==============================================================================
 // Outputs
 //==============================================================================
 
 @description('The resource ID of the key vault.')
-output resourceId string = keyVault.id
+output resourceId string = keyVault.outputs.resourceId
 
 @description('The name of the key vault.')
 output name string = keyVault.name
 
 @description('The URI of the key vault.')
-output uri string = keyVault.properties.vaultUri
+output uri string = keyVault.outputs.uri

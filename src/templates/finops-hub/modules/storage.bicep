@@ -27,8 +27,14 @@ param tags object = {}
 @description('Optional. Tags to apply to resources based on their resource type. Resource type specific tags will be merged with tags for all resources.')
 param tagsByResource object = {}
 
-@description('Optional. List of scope IDs to create exports for.')
-param exportScopes array
+@description('Optional. List of scope IDs to monitor and ingest cost for.')
+param scopesToMonitor array
+
+@description('Optional. Number of days of cost data to retain in the ms-cm-exports container. Default: 0.')
+param msexportRetentionInDays int = 0
+
+@description('Optional. Number of months of cost data to retain in the ingestion container. Default: 13.')
+param ingestionRetentionInMonths int = 13
 
 @description('Optional. To use Private Endpoints, add target subnet resource Id.')
 param subnetResourceId string = ''
@@ -62,6 +68,12 @@ param newsubnetResourceId string = ''
 @description('Optional. Name of the virtual network.')
 param virtualNetworkName string = ''
 
+@description('Optional. To use Private Endpoints in an existing virtual network, add target blob storage account private DNS zone resource Id.')
+param blobPrivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target private DNS zones resource group name.')
+param privateDNSZonesResourceGroupName string = ''
+
 //------------------------------------------------------------------------------
 // Variables
 //------------------------------------------------------------------------------
@@ -70,6 +82,10 @@ param virtualNetworkName string = ''
 var safeHubName = replace(replace(toLower(hubName), '-', ''), '_', '')
 var storageAccountSuffix = uniqueSuffix
 var storageAccountName = '${take(safeHubName, 24 - length(storageAccountSuffix))}${storageAccountSuffix}'
+var schemaFiles = {
+  'focuscost_1.0': loadTextContent('../schemas/focuscost_1.0.json')
+  'focuscost_1.0-preview(v1)': loadTextContent('../schemas/focuscost_1.0-preview(v1).json')
+}
 
 //==============================================================================
 // Resources
@@ -118,25 +134,23 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = {
         principalType: 'ServicePrincipal'
       }
     ]
-    privateEndpoints: (networkingOption == 'Public' || networkingOption == 'Private') ? [] : [
+    privateEndpoints: (networkingOption == 'Public') ? null : [
       {
         service: 'blob'
         name: 'pve-blob'
         subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : newsubnetResourceId
-        privateDnsZoneResourceIds: (networkingOption != 'Public') ? [
+        privateDnsZoneResourceIds: (networkingOption == 'Private') ? [
           privateBlobDNSZone.outputs.resourceId
-        ]: []
+        ]
+        : (networkingOption == 'PrivateWithExistingNetwork') ? [blobPrivateDNSZone.id]
+        :[]
+        privateDnsZoneGroupName: (networkingOption == 'Private') ? privateBlobDNSZone.name : (networkingOption == 'PrivateWithExistingNetwork') ? blobPrivateDNSZone.name : null
       }
-      /*{
-        service: 'dfs'
-        name: 'pve-dfs'
-        subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : newsubnetResourceId
-        privateDnsZoneResourceIds: (networkingOption != 'Public') ? [
-          privateDFSDNSZone.outputs.resourceId
-        ]: []
-      }*/
     ]
-    networkAcls: (networkingOption == 'Public') ? null : {
+    networkAcls: (networkingOption == 'Public') ? {
+      bypass: 'AzureServices'
+      defaultAction: 'Allow'
+    } : {
       bypass: 'AzureServices'
       defaultAction: 'Deny'
       virtualNetworkRules: [
@@ -154,6 +168,10 @@ module storageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = {
 // Private DNS zones
 //------------------------------------------------------------------------------
 
+resource blobPrivateDNSZone 'Microsoft.Network/privateDnsZones@2020-06-01' existing = if(networkingOption == 'PrivateWithExistingNetwork') {
+  name: blobPrivateDNSZoneName
+  scope: resourceGroup(privateDNSZonesResourceGroupName)
+}
 module privateBlobDNSZone 'br/public:avm/res/network/private-dns-zone:0.5.0' = if(networkingOption == 'Private'){
   name: 'blobDnsZone'
   params: {
@@ -168,57 +186,13 @@ module privateBlobDNSZone 'br/public:avm/res/network/private-dns-zone:0.5.0' = i
   }
 }
 
-/*
-module privateDFSDNSZone 'br/public:avm/res/network/private-dns-zone:0.5.0' = if(networkingOption == 'Private'){
-  name: 'dfsDnsZone'
-  params: {
-    name: 'privatelink.dfs.${environment().suffixes.storage}'
-    location: 'global'
-    virtualNetworkLinks: [
-      {
-        virtualNetworkResourceId: resourceId('Microsoft.Network/virtualNetworks', virtualNetworkName)
-        registrationEnabled: false
-      }
-    ]
-  }
-}
-  */
-
-/*
-resource privateEndpointDfs 'Microsoft.Network/privateEndpoints@2022-05-01' = if(networkingOption != 'Public'){
-  name: 'pve-dfs-${storageAccount.name}'
-  location: location
-  properties: {
-
-    customNetworkInterfaceName: 'nic-dfs-${storageAccount.name}'
-    privateLinkServiceConnections: [
-      {
-        name: 'pve-dfs-${storageAccount.name}'
-        properties: {
-          privateLinkServiceId: storageAccount.outputs.resourceId
-          groupIds: ['dfs']
-        }
-      }
-    ]
-    subnet: {
-      id: networkingOption == 'PrivateWithExistingNetwork' ? subnetResourceId : (networkingOption == 'Private') ? newsubnetResourceId : null
-      properties: {
-        privateEndpointNetworkPolicies: 'Enabled'
-      }
-
-    }
-  }
-}
-*/
-
-
 //------------------------------------------------------------------------------
 // Settings.json
 //------------------------------------------------------------------------------
 module uploadSettings 'br/public:avm/res/resources/deployment-script:0.2.4' = {
-  name: 'uploadSettings'
+  name: '${storageAccount.name}_uploadSettings'
   params: {
-    name: 'uploadSettings'
+    name: '${storageAccount.name}_uploadSettings'
     kind: 'AzurePowerShell'
     location: startsWith(location, 'china') ? 'chinaeast2' : location
     tags: union(tags, tagsByResource[?'Microsoft.Resources/deploymentScripts'] ?? {})
@@ -236,21 +210,33 @@ module uploadSettings 'br/public:avm/res/resources/deployment-script:0.2.4' = {
           value: loadTextContent('./ftkver.txt')
         }
         {
-          name: 'exportScopes'
-          value: join(exportScopes, '|')
+          name: 'scopes'
+          value: join(scopesToMonitor, '|')
+        }
+        {
+          name: 'msexportRetentionInDays'
+          value: string(msexportRetentionInDays)
+        }
+        {
+          name: 'ingestionRetentionInMonths'
+          value: string(ingestionRetentionInMonths)
         }
         {
           name: 'storageAccountName'
-          value: storageAccountName
+          value: storageAccount.name
         }
         {
           name: 'containerName'
           value: 'config'
         }
+        {
+          name: 'schemaFiles'
+          value: string(schemaFiles)
+        }
       ]
     }
     scriptContent: loadTextContent('./scripts/Copy-FileToAzureBlob.ps1')
-    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private') ? [newScriptsSubnetResourceId] : (networkingOption == 'PrivateWithExistingNetwork') ? [scriptsSubnetResourceId] : []
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private') ? [newScriptsSubnetResourceId] : [scriptsSubnetResourceId]
     storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccountResourceId
   }
 }

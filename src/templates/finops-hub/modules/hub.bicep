@@ -11,6 +11,13 @@ param hubName string
 @description('Optional. Azure location where all resources should be created. See https://aka.ms/azureregions. Default: (resource group location).')
 param location string = resourceGroup().location
 
+@description('Optional. Indicates whether the Event Grid resource provider has already been registered (e.g., in a previous hub deployment). Event Grid RP registration is required. If not set, a temporary Event Grid namespace will be created to auto-register the resource provider. Default: false (register RP).')
+param skipEventGridRegistration bool = false
+
+@description('Optional. Azure location to use for a temporary Event Grid namespace to register the Microsoft.EventGrid resource provider if the primary location is not supported. The namespace will be deleted and is not used for hub operation. Default: "" (same as location).')
+param eventGridLocation string = ''
+
+
 @allowed([
   'Premium_LRS'
   'Premium_ZRS'
@@ -24,11 +31,17 @@ param tags object = {}
 @description('Optional. Tags to apply to resources based on their resource type. Resource type specific tags will be merged with tags for all resources.')
 param tagsByResource object = {}
 
-@description('Optional. List of scope IDs to create exports for.')
-param exportScopes array
+@description('Optional. List of scope IDs to monitor and ingest cost for.')
+param scopesToMonitor array
 
-@description('Optional. Indicates whether ingested data should be converted to Parquet. Default: true.')
-param convertToParquet bool = true
+@description('Optional. Number of days of cost data to retain in the ms-cm-exports container. Default: 0.')
+param exportRetentionInDays int = 0
+
+@description('Optional. Number of months of cost data to retain in the ingestion container. Default: 13.')
+param ingestionRetentionInMonths int = 13
+
+@description('Optional. Remote storage account for ingestion dataset.')
+param remoteHubStorageUri string = ''
 
 @description('Optional. Enable telemetry to track anonymous module usage trends, monitor for bugs, and improve future releases.')
 param enableDefaultTelemetry bool = true
@@ -68,27 +81,72 @@ param scriptsSubnetName string = 'subnet-finops-hub-scripts'
 @description('Optional. Address prefix for the created scripts subnet.')
 param scriptsSubnetPrefix string = cidrSubnet(networkAddressPrefix,24,1)
 
+@description('Optional. To use Private Endpoints in an existing virtual network, add target blob storage account private DNS zone resource Id.')
+param blobPrivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target ADF private DNS zone resource Id.')
+param ADFprivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target ADF Poral private DNS zone resource Id.')
+param ADFPoralPrivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target KeyVault private DNS zone resource Id.')
+param keyVaultPrivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target private DNS zones resource group name.')
+param privateDNSZonesResourceGroupName string = ''
 
 //------------------------------------------------------------------------------
 // Variables
 //------------------------------------------------------------------------------
 
 // Add cm-resource-parent to group resources in Cost Management
+var finOpsToolkitVersion = loadTextContent('ftkver.txt')
 var resourceTags = union(tags, {
-    'cm-resource-parent': '${resourceGroup().id}/providers/Microsoft.Cloud/hubs/${hubName}'
-  })
+  'cm-resource-parent': '${resourceGroup().id}/providers/Microsoft.Cloud/hubs/${hubName}'
+  'ftk-version': finOpsToolkitVersion
+  'ftk-tool': 'FinOps hubs'
+})
 
 // Generate globally unique Data Factory name: 3-63 chars; letters, numbers, non-repeating dashes
-var safeHubName = replace(replace(toLower(hubName), '-', ''), '_', '')
 var uniqueSuffix = uniqueString(hubName, resourceGroup().id)
 var dataFactoryPrefix = '${replace(hubName, '_', '-')}-engine'
 var dataFactorySuffix = '-${uniqueSuffix}'
-var dataFactoryName = replace('${take(dataFactoryPrefix, 63 - length(dataFactorySuffix))}${dataFactorySuffix}', '--', '-')
-var storageAccountName = '${take(safeHubName, 24 - length(uniqueSuffix))}${uniqueSuffix}'
+var dataFactoryName = replace(
+  '${take(dataFactoryPrefix, 63 - length(dataFactorySuffix))}${dataFactorySuffix}',
+  '--',
+  '-'
+)
+
+var safeHubName = replace(replace(toLower(hubName), '-', ''), '_', '')
+var storageAccountSuffix = uniqueSuffix
+var storageAccountName = '${take(safeHubName, 24 - length(storageAccountSuffix))}${storageAccountSuffix}'
+
+var eventGridPrefix = '${replace(hubName, '_', '-')}-ns'
+var eventGridSuffix = '-${uniqueSuffix}'
+var eventGridName = replace(
+  '${take(eventGridPrefix, 50 - length(eventGridSuffix))}${eventGridSuffix}',
+  '--',
+  '-'
+)
+
+// EventGrid Contributor role
+var eventGridContributorRoleId = '1e241071-0855-49ea-94dc-649edcd759de'
+
+// Find a fallback region for EventGrid
+var eventGridLocationFallback = {
+  israelcentral: 'uaenorth'
+  italynorth: 'switzerlandnorth'
+  mexicocentral: 'southcentralus'
+  polandcentral: 'swedencentral'
+  spaincentral: 'francecentral'
+  usdodeast: 'usdodcentral'
+}
+var finalEventGridLocation = eventGridLocation != null && !empty(eventGridLocation) ? eventGridLocation : (contains(eventGridLocationFallback, location) ? eventGridLocationFallback[location] : location)
 
 // The last segment of the telemetryId is used to identify this module
 var telemetryId = '00f120b5-2007-6120-0000-40b000000000'
-var finOpsToolkitVersion = loadTextContent('ftkver.txt')
+
 // Private Endpoints for ADF
 var adfPrivateEndpoints = [
   {
@@ -127,13 +185,110 @@ resource defaultTelemetry 'Microsoft.Resources/deployments@2022-09-01' = if (ena
       metadata: {
         _generator: {
           name: 'FinOps toolkit'
-          version: '0.4'  /////// Revert
+          version: finOpsToolkitVersion
         }
       }
       resources: []
     }
   }
 }
+
+//------------------------------------------------------------------------------
+// RP registration
+// Create and delete a temporary EventGrid namespace so ARM will auto-register
+// the Microsoft.EventGrid RP. This is needed because we cannot register RPs in
+// a resource group template.
+//------------------------------------------------------------------------------
+// Temporary resource
+resource tempEventGridNamespace 'Microsoft.EventGrid/namespaces@2023-12-15-preview' = if (!skipEventGridRegistration) {
+  name: eventGridName
+  location: finalEventGridLocation
+  sku: {
+    capacity: 1
+    name: 'Standard'
+  }
+  properties: {
+    publicNetworkAccess: 'Disabled'
+  }
+}
+
+// Managed identity to run script
+resource cleanupIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (!skipEventGridRegistration) {
+  name: '${uniqueSuffix}_cleanup'
+  location: finalEventGridLocation
+}
+
+// Assign access to the identity
+resource cleanupIdentityRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!skipEventGridRegistration) {
+  name: guid(eventGridContributorRoleId, cleanupIdentity.id)
+  scope: tempEventGridNamespace
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', eventGridContributorRoleId)
+    principalId: cleanupIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Cleanup script
+resource cleanupTempEventGridNamespace 'Microsoft.Resources/deploymentScripts@2020-10-01' = if (!skipEventGridRegistration) {
+  name: '${uniqueSuffix}_deleteEventGrid'
+  dependsOn: [
+    cleanupIdentityRole
+  ]
+  // chinaeast2 is the only region in China that supports deployment scripts
+  location: startsWith(location, 'china') ? 'chinaeast2' : location
+  kind: 'AzurePowerShell'
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${cleanupIdentity.id}': {}
+    }
+  }
+  properties: {
+    azPowerShellVersion: '8.0'
+    scriptContent: 'Remove-AzResource -Id $env:resourceId -Force'
+    timeout: 'PT30M'
+    cleanupPreference: 'OnSuccess'
+    retentionInterval: 'PT1H'
+    environmentVariables: [
+      {
+        name: 'resourceId'
+        value: tempEventGridNamespace.id
+      }
+    ]
+  }
+}
+
+//------------------------------------------------------------------------------
+// ADLSv2 storage account for staging and archive
+//------------------------------------------------------------------------------
+
+module storage 'storage.bicep' = {
+  name: 'storage'
+  params: {
+    hubName: hubName
+    uniqueSuffix: uniqueSuffix
+    sku: storageSku
+    location: location
+    tags: resourceTags
+    tagsByResource: tagsByResource
+    scopesToMonitor: scopesToMonitor
+    msexportRetentionInDays: exportRetentionInDays
+    ingestionRetentionInMonths: ingestionRetentionInMonths
+    subnetResourceId: subnetResourceId
+    scriptsSubnetResourceId: scriptsSubnetResourceId
+    userAssignedManagedIdentityResourceId: uploadFilesIdentity.id
+    userAssignedManagedIdentityPrincipalId: uploadFilesIdentity.properties.principalId
+    dsStorageAccountResourceId : (networkingOption == 'Public') ? '' : dsStorageAccount.outputs.resourceId
+    networkingOption: networkingOption
+    newsubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : null
+    newScriptsSubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[1] : null
+    virtualNetworkName: (networkingOption == 'Private') ? vnet.name : null
+    blobPrivateDNSZoneName: blobPrivateDNSZoneName
+    privateDNSZonesResourceGroupName: privateDNSZonesResourceGroupName
+  }
+}
+
 
 //------------------------------------------------------------------------------
 // Storage account for deployment scripts
@@ -191,37 +346,14 @@ module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = if(
 }
 
 //------------------------------------------------------------------------------
-// ADLSv2 storage account for staging and archive
-//------------------------------------------------------------------------------
-
-module storage 'storage.bicep' = {
-  name: 'storage'
-  params: {
-    hubName: hubName
-    uniqueSuffix: uniqueSuffix
-    sku: storageSku
-    location: location
-    tags: resourceTags
-    tagsByResource: tagsByResource
-    exportScopes: exportScopes
-    subnetResourceId: subnetResourceId
-    scriptsSubnetResourceId: scriptsSubnetResourceId
-    userAssignedManagedIdentityResourceId: uploadFilesIdentity.id
-    userAssignedManagedIdentityPrincipalId: uploadFilesIdentity.properties.principalId
-    dsStorageAccountResourceId : (networkingOption == 'Public') ? '' : dsStorageAccount.outputs.resourceId
-    networkingOption: networkingOption
-    newsubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : null
-    newScriptsSubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[1] : null
-    virtualNetworkName: (networkingOption == 'Private') ? vnet.name : null
-  }
-}
-
-//------------------------------------------------------------------------------
 // Data Factory and pipelines
 //------------------------------------------------------------------------------
 
 resource dataFactory 'Microsoft.DataFactory/factories@2018-06-01' = {
   name: dataFactoryName
+  dependsOn: [
+    tempEventGridNamespace
+  ]
   location: location
   tags: union(resourceTags, tagsByResource[?'Microsoft.DataFactory/factories'] ?? {})
   identity: { type: 'SystemAssigned' }
@@ -237,6 +369,7 @@ resource dataFactory 'Microsoft.DataFactory/factories@2018-06-01' = {
     })
 }
 
+
 // Create managed identity for data factory operations
 resource dataFactoryScriptsIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${storageAccountName}_triggerManager'
@@ -244,16 +377,19 @@ resource dataFactoryScriptsIdentity 'Microsoft.ManagedIdentity/userAssignedIdent
   location: location
 }
 
+
 module dataFactoryResources 'dataFactory.bicep' = {
   name: 'dataFactoryResources'
   params: {
     dataFactoryName: dataFactoryName
-    convertToParquet: convertToParquet
-    keyVaultName: keyVault.outputs.name
     storageAccountName: storage.outputs.name
     exportContainerName: storage.outputs.exportContainer
+    configContainerName: storage.outputs.configContainer
     ingestionContainerName: storage.outputs.ingestionContainer
+    keyVaultName: keyVault.outputs.name
     location: location
+    hubName: hubName
+    remoteHubStorageUri: remoteHubStorageUri
     tags: resourceTags
     tagsByResource: tagsByResource
     scriptsSubnetResourceId: scriptsSubnetResourceId
@@ -278,7 +414,7 @@ module keyVault 'keyVault.bicep' = {
     tags: resourceTags
     tagsByResource: tagsByResource
     storageAccountName: storage.outputs.name
-    subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? scriptsSubnetResourceId : (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : ''
+    subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : ''
     accessPolicies: [
       {
         objectId: dataFactory.identity.principalId
@@ -292,6 +428,9 @@ module keyVault 'keyVault.bicep' = {
     ]
     networkingOption: networkingOption
     newsubnetResourceId: (networkingOption == 'Private') ? vnet.outputs.subnetResourceIds[0] : null
+    keyVaultPrivateDNSZoneName: keyVaultPrivateDNSZoneName
+    privateDNSZonesResourceGroupName: privateDNSZonesResourceGroupName
+    virtualNetworkName: (networkingOption == 'Private') ? vnet.name : null
     }
 }
 
@@ -340,11 +479,20 @@ module vnet 'br/public:avm/res/network/virtual-network:0.1.8' = if (networkingOp
 // Private Endpoints for ADF
 //------------------------------------------------------------------------------
 
+resource ADFprivateDNSZone 'Microsoft.Network/privateDnsZones@2020-06-01' existing = if(networkingOption == 'PrivateWithExistingNetwork') {
+  name: ADFprivateDNSZoneName
+  scope: resourceGroup(privateDNSZonesResourceGroupName)
+}
+
+resource ADFPoralPrivateDNSZone 'Microsoft.Network/privateDnsZones@2020-06-01' existing = if(networkingOption == 'PrivateWithExistingNetwork') {
+  name: ADFPoralPrivateDNSZoneName
+  scope: resourceGroup(privateDNSZonesResourceGroupName)
+}
+
 resource privateEndpointADF 'Microsoft.Network/privateEndpoints@2022-05-01' = [for (privateEndpoint,index) in adfPrivateEndpoints: if(networkingOption != 'Public')  {
   name: 'pve-${privateEndpoint.name}-${dataFactory.name}'
   location: location
   properties: {
-
     customNetworkInterfaceName: 'nic-${privateEndpoint.name}-${dataFactory.name}'
     privateLinkServiceConnections: [
       {
@@ -360,8 +508,26 @@ resource privateEndpointADF 'Microsoft.Network/privateEndpoints@2022-05-01' = [f
       properties: {
         privateEndpointNetworkPolicies: 'Enabled'
       }
-
     }
+  }
+}]
+
+resource ADFDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-01-01' = [for (privateEndpoint,index) in adfPrivateEndpoints: if(networkingOption != 'Public')  {
+  name: '${privateEndpointADF[index].name}/${privateEndpoint.name}dnsZoneGroup'
+  properties: {
+    privateDnsZoneConfigs: [
+      privateEndpoint.name == 'adf' ?{
+        name: privateDNSZoneDataFactory.name
+        properties: {
+          privateDnsZoneId: (networkingOption == 'Private') ? privateDNSZoneDataFactory.outputs.resourceId : ADFprivateDNSZone.id
+        }
+      } : {
+        name: privateDNSZoneDataFactoryPortal.name
+        properties: {
+          privateDnsZoneId: (networkingOption == 'Private') ? privateDNSZoneDataFactoryPortal.outputs.resourceId : ADFPoralPrivateDNSZone.id
+        }
+      }
+    ]
   }
 }]
 
@@ -418,3 +584,9 @@ output storageAccountName string = storage.outputs.name
 
 @description('URL to use when connecting custom Power BI reports to your data.')
 output storageUrlForPowerBI string = 'https://${storage.outputs.name}.dfs.${environment().suffixes.storage}/${storage.outputs.ingestionContainer}'
+
+@description('Object ID of the Data Factory managed identity. This will be needed when configuring managed exports.')
+output managedIdentityId string = dataFactory.identity.principalId
+
+@description('Azure AD tenant ID. This will be needed when configuring managed exports.')
+output managedIdentityTenantId string = tenant().tenantId

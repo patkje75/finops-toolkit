@@ -13,6 +13,9 @@ param hubName string
 @description('Optional. Azure location where all resources should be created. See https://aka.ms/azureregions. Default: Same as deployment.')
 param location string = resourceGroup().location
 
+@description('Optional. Azure location to use for a temporary Event Grid namespace to register the Microsoft.EventGrid resource provider if the primary location is not supported. The namespace will be deleted and is not used for hub operation. Default: "" (same as location).')
+param fallbackEventGridLocation string = ''
+
 @allowed([
   'Premium_LRS'
   'Premium_ZRS'
@@ -26,14 +29,39 @@ param tags object = {}
 @description('Optional. Tags to apply to resources based on their resource type. Resource type specific tags will be merged with tags for all resources.')
 param tagsByResource object = {}
 
-@description('Optional. List of scope IDs to create exports for.')
-param exportScopes array = []
+@description('Optional. List of scope IDs to monitor and ingest cost for.')
+param scopesToMonitor array = []
+
+@description('Optional. Number of days of cost data to retain in the ms-cm-exports container. Default: 0.')
+param exportRetentionInDays int = 0
+
+@description('Optional. Number of months of cost data to retain in the ingestion container. Default: 13.')
+param ingestionRetentionInMonths int = 13
+
+@description('Optional. Storage account to push data to for ingestion into a remote hub.')
+param remoteHubStorageUri string = ''
+
 
 @description('Optional. To use Private Endpoints in an existing virtual network, add target subnet resource Id.')
 param subnetResourceId string = ''
 
 @description('Optional. To use Private Endpoints  in an existing virtual network, add target subnet resource Id for the deployment scripts')
 param scriptsSubnetResourceId string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target blob storage account private DNS zone resource Id.')
+param blobPrivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target ADF private DNS zone resource Id.')
+param ADFprivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target ADF Poral private DNS zone resource Id.')
+param ADFPoralPrivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target KeyVault private DNS zone resource Id.')
+param keyVaultPrivateDNSZoneName string = ''
+
+@description('Optional. To use Private Endpoints in an existing virtual network, add target private DNS zones resource group name.')
+param privateDNSZonesResourceGroupName string = ''
 
 @description('Optional. To create networking resources.')
 @allowed([
@@ -75,7 +103,10 @@ module hub 'modules/hub.bicep' = {
     storageSku: storageSku
     tags: tags
     tagsByResource: tagsByResource
-    exportScopes: exportScopes
+    scopesToMonitor: scopesToMonitor
+    exportRetentionInDays: exportRetentionInDays
+    ingestionRetentionInMonths: ingestionRetentionInMonths
+    remoteHubStorageUri: remoteHubStorageUri
     subnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? subnetResourceId : ''
     scriptsSubnetResourceId: (networkingOption == 'PrivateWithExistingNetwork') ? scriptsSubnetResourceId : ''
     networkingOption: networkingOption
@@ -85,6 +116,11 @@ module hub 'modules/hub.bicep' = {
     scriptsSubnetName: scriptsSubnetName
     networkSubnetPrefix: networkSubnetPrefix
     scriptsSubnetPrefix: scriptsSubnetPrefix
+    blobPrivateDNSZoneName: blobPrivateDNSZoneName
+    ADFprivateDNSZoneName: ADFprivateDNSZoneName
+    ADFPoralPrivateDNSZoneName: ADFPoralPrivateDNSZoneName
+    keyVaultPrivateDNSZoneName: keyVaultPrivateDNSZoneName
+    privateDNSZonesResourceGroupName: privateDNSZonesResourceGroupName
   }
 }
 
@@ -109,3 +145,9 @@ output storageAccountName string = hub.outputs.storageAccountName
 
 @description('URL to use when connecting custom Power BI reports to your data.')
 output storageUrlForPowerBI string = hub.outputs.storageUrlForPowerBI
+
+@description('Object ID of the Data Factory managed identity. This will be needed when configuring managed exports.')
+output managedIdentityId string = hub.outputs.managedIdentityId
+
+@description('Azure AD tenant ID. This will be needed when configuring managed exports.')
+output managedIdentityTenantId string = hub.outputs.managedIdentityTenantId
