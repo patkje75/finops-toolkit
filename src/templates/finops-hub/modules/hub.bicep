@@ -33,8 +33,6 @@ param tagsByResource object = {}
 
 @description('Optional. List of scope IDs to monitor and ingest cost for.')
 param scopesToMonitor array
-@description('Optional. List of scope IDs to monitor and ingest cost for.')
-param scopesToMonitor array
 
 @description('Optional. Number of days of cost data to retain in the ms-cm-exports container. Default: 0.')
 param exportRetentionInDays int = 0
@@ -105,10 +103,6 @@ param privateDNSZonesResourceGroupName string = ''
 // Add cm-resource-parent to group resources in Cost Management
 var finOpsToolkitVersion = loadTextContent('ftkver.txt')
 var resourceTags = union(tags, {
-  'cm-resource-parent': '${resourceGroup().id}/providers/Microsoft.Cloud/hubs/${hubName}'
-  'ftk-version': finOpsToolkitVersion
-  'ftk-tool': 'FinOps hubs'
-})
   'cm-resource-parent': '${resourceGroup().id}/providers/Microsoft.Cloud/hubs/${hubName}'
   'ftk-version': finOpsToolkitVersion
   'ftk-tool': 'FinOps hubs'
@@ -357,9 +351,6 @@ module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = if(
 
 resource dataFactory 'Microsoft.DataFactory/factories@2018-06-01' = {
   name: dataFactoryName
-  dependsOn: [
-    tempEventGridNamespace
-  ]
   dependsOn: [
     tempEventGridNamespace
   ]
