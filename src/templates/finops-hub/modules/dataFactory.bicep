@@ -187,7 +187,7 @@ module deleteOldResources 'br/public:avm/res/resources/deployment-script:0.2.4' 
     location: startsWith(location, 'china') ? 'chinaeast2' : location
     kind: 'AzurePowerShell'
     tags: tags
-    azPowerShellVersion: '9.7'
+    azPowerShellVersion: '12.0'
     retentionInterval: 'PT1H'
     cleanupPreference: 'OnSuccess'
     scriptContent: loadTextContent('./scripts/Remove-OldResources.ps1')
@@ -235,7 +235,7 @@ module stopTriggers 'br/public:avm/res/resources/deployment-script:0.2.0' = {
       tags,
       tagsByResource[?'Microsoft.Resources/deploymentScripts'] ?? {}
     )
-    azPowerShellVersion: '9.7'
+    azPowerShellVersion: '12.0'
     retentionInterval: 'PT1H'
     cleanupPreference: 'OnSuccess'
     scriptContent: loadTextContent('./scripts/Start-Triggers.ps1')
@@ -2154,7 +2154,7 @@ module startHubTriggers 'br/public:avm/res/resources/deployment-script:0.2.4' = 
       tagsByResource[?'Microsoft.Resources/deploymentScripts'] ?? {}
     )
     kind: 'AzurePowerShell'
-    azPowerShellVersion: '9.7'
+    azPowerShellVersion: '12.0'
     retentionInterval: 'PT1H'
     cleanupPreference: 'OnSuccess'
     managedIdentities: {

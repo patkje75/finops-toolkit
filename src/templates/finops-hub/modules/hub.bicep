@@ -243,7 +243,7 @@ module cleanupTempEventGridNamespace 'br/public:avm/res/resources/deployment-scr
         cleanupIdentity.id
       ]
     }
-    azPowerShellVersion: '9.7'
+    azPowerShellVersion: '12.0'
     retentionInterval: 'PT1H'
     timeout: 'PT30M'
     cleanupPreference: 'OnSuccess'
@@ -325,6 +325,21 @@ module dsStorageAccount 'br/public:avm/res/storage/storage-account:0.11.0' = if(
       {
         roleDefinitionIdOrName: '69566ab7-960f-475b-8e7c-b3118f30c6bd'
         principalId: uploadFilesIdentity.properties.principalId
+        principalType: 'ServicePrincipal'
+      }
+      {
+        roleDefinitionIdOrName: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+        principalId: cleanupIdentity.properties.principalId
+        principalType: 'ServicePrincipal'
+      }
+      {
+        roleDefinitionIdOrName: 'e40ec5ca-96e0-45a2-b4ff-59039f2c2b59'
+        principalId: cleanupIdentity.properties.principalId
+        principalType: 'ServicePrincipal'
+      }
+      {
+        roleDefinitionIdOrName: '69566ab7-960f-475b-8e7c-b3118f30c6bd'
+        principalId: cleanupIdentity.properties.principalId
         principalType: 'ServicePrincipal'
       }
       {

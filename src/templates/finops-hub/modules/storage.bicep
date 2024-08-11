@@ -201,7 +201,7 @@ module uploadSettings 'br/public:avm/res/resources/deployment-script:0.2.4' = {
         userAssignedManagedIdentityResourceId
       ]
     }
-    azPowerShellVersion: '9.7'
+    azPowerShellVersion: '12.0'
     retentionInterval: 'PT1H'
     environmentVariables: {
       secureList: [

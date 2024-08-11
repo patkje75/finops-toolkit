@@ -1,14 +1,14 @@
 using './main.bicep'
 
-param hubName = 'hub8702'
+param hubName = 'hub960'
 
 //###### Parameters options
 //###### Option 1: 'Public'
 //Just provide the hubName
 
 //###### Parameters options
-//###### Option 2: 'Public'
-//######param networkingOption = 'Private'
+//###### Option 2: 'Private'
+//param networkingOption = 'Private'
 //Just provide the hubName
 
 //###### Parameters options
