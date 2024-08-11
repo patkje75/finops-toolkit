@@ -11,6 +11,7 @@ $validateScopes = { $_.Length -gt 45 }
 $fileName = 'settings.json'
 $filePath = Join-Path -Path . -ChildPath $fileName
 $newScopes = $env:scopes.Split('|') | Where-Object $validateScopes | ForEach-Object { @{ scope = $_ } }
+$newScopes = $env:scopes.Split('|') | Where-Object $validateScopes | ForEach-Object { @{ scope = $_ } }
 
 # Get storage context
 $storageContext = @{
