@@ -8,7 +8,7 @@
 @description('Required. Name of the FinOps hub instance.')
 param hubName string
 
-@description('Optional. Name of the hub. Used to ensure unique resource names. Default: "finops-hub".')
+@description('Required. Name of the Data Factory instance.')
 param dataFactoryName string
 
 @description('Required. The name of the Azure Key Vault instance.')
@@ -25,9 +25,14 @@ param ingestionContainerName string
 
 @description('Required. The name of the container where normalized data is ingested.')
 param configContainerName string
+@description('Required. The name of the container where normalized data is ingested.')
+param configContainerName string
 
 @description('Optional. The location to use for the managed identity and deployment script to auto-start triggers. Default = (resource group location).')
 param location string = resourceGroup().location
+
+@description('Optional. Remote storage account for ingestion dataset.')
+param remoteHubStorageUri string
 
 @description('Optional. Remote storage account for ingestion dataset.')
 param remoteHubStorageUri string
@@ -89,8 +94,13 @@ var datasetPropsDefault = {
 var safeExportContainerName = replace('${exportContainerName}', '-', '_')
 var safeIngestionContainerName = replace('${ingestionContainerName}', '-', '_')
 var safeConfigContainerName = replace('${configContainerName}', '-', '_')
+var safeConfigContainerName = replace('${configContainerName}', '-', '_')
 
 // All hub triggers (used to auto-start)
+var fileAddedExportTriggerName = '${safeExportContainerName}_FileAdded'
+var updateConfigTriggerName = '${safeConfigContainerName}_SettingsUpdated'
+var dailyTriggerName = '${safeConfigContainerName}_DailySchedule'
+var monthlyTriggerName = '${safeConfigContainerName}_MonthlySchedule'
 var fileAddedExportTriggerName = '${safeExportContainerName}_FileAdded'
 var updateConfigTriggerName = '${safeConfigContainerName}_SettingsUpdated'
 var dailyTriggerName = '${safeConfigContainerName}_DailySchedule'
@@ -105,9 +115,17 @@ var allHubTriggers = [
 // Roles needed to auto-start triggers
 var autoStartRbacRoles = [
   '673868aa-7521-48a0-acc6-0f60742d39f5' // Data Factory contributor - https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#data-factory-contributor
-  'e40ec5ca-96e0-45a2-b4ff-59039f2c2b59' // Managed Identity Contributor - https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles#managed-identity-contributor
+  'e40ec5ca-96e0-45a2-b4ff-59039f2c2b59' // Managed Identity Contributor - https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#managed-identity-contributor
 ]
 
+// Storage roles needed for ADF to create CM exports and process the output
+// Does not include roles assignments needed against the export scope
+var storageRbacRoles = [
+  '17d1049b-9a84-46fb-8f53-869881c3d3ab' // Storage Account Contributor https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#storage-account-contributor
+  'ba92f5b4-2d11-453d-a403-e96b0029c9fe' // Storage Blob Data Contributor https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#storage-blob-data-contributor
+  'acdd72a7-3385-48ef-bd42-f606fba81ae7' // Reader https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#reader
+  '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9' // User Access Administrator https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#user-access-administrator
+]
 // Storage roles needed for ADF to create CM exports and process the output
 // Does not include roles assignments needed against the export scope
 var storageRbacRoles = [
@@ -282,7 +300,7 @@ resource linkedService_keyVault 'Microsoft.DataFactory/factories/linkedservices@
     parameters: {}
     type: 'AzureKeyVault'
     typeProperties: {
-      baseUrl: keyVault.properties.vaultUri
+      baseUrl: reference('Microsoft.KeyVault/vaults/${keyVault.name}', '2023-02-01').vaultUri
     }
   }
 }
@@ -950,6 +968,7 @@ resource pipeline_RunBackfill 'Microsoft.DataFactory/factories/pipelines@2018-06
     ]
     concurrency: 1
     parameters: {
+      StartDate: {
       StartDate: {
         type: 'string'
       }
