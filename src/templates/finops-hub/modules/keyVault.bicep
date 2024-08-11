@@ -77,6 +77,7 @@ module keyVault 'br/public:avm/res/key-vault/vault:0.7.0' = {
     enableVaultForDeployment: true
     enableSoftDelete: true
     softDeleteRetentionInDays: 90
+    enablePurgeProtection: false //TODO: Change to true
     enableRbacAuthorization: false
     createMode: 'default'
     publicNetworkAccess: (networkingOption != 'Public') ? 'Disabled' : 'Enabled'

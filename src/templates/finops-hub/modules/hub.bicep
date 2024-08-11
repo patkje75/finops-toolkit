@@ -142,7 +142,7 @@ var eventGridLocationFallback = {
   spaincentral: 'francecentral'
   usdodeast: 'usdodcentral'
 }
-var finalEventGridLocation = eventGridLocation != null && !empty(eventGridLocation) ? eventGridLocation : (contains(eventGridLocationFallback, location) ? eventGridLocationFallback[location] : location)
+var finalEventGridLocation = eventGridLocation != null && !empty(eventGridLocation) ? eventGridLocation : (eventGridLocationFallback[?location] ?? location)
 
 // The last segment of the telemetryId is used to identify this module
 var telemetryId = '00f120b5-2007-6120-0000-40b000000000'
@@ -162,7 +162,6 @@ var adfPrivateEndpoints = [
     ]
   }
 ]
-
 
 //==============================================================================
 // Resources
@@ -228,37 +227,40 @@ resource cleanupIdentityRole 'Microsoft.Authorization/roleAssignments@2022-04-01
     principalType: 'ServicePrincipal'
   }
 }
-
 // Cleanup script
-resource cleanupTempEventGridNamespace 'Microsoft.Resources/deploymentScripts@2020-10-01' = if (!skipEventGridRegistration) {
+module cleanupTempEventGridNamespace 'br/public:avm/res/resources/deployment-script:0.2.4' = {
   name: '${uniqueSuffix}_deleteEventGrid'
   dependsOn: [
     cleanupIdentityRole
   ]
-  // chinaeast2 is the only region in China that supports deployment scripts
-  location: startsWith(location, 'china') ? 'chinaeast2' : location
-  kind: 'AzurePowerShell'
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${cleanupIdentity.id}': {}
+  params: {
+    name: '${uniqueSuffix}_deleteEventGrid'
+    kind: 'AzurePowerShell'
+    // chinaeast2 is the only region in China that supports deployment scripts
+    location: startsWith(location, 'china') ? 'chinaeast2' : location
+    managedIdentities: {
+      userAssignedResourcesIds: [
+        cleanupIdentity.id
+      ]
     }
-  }
-  properties: {
-    azPowerShellVersion: '8.0'
-    scriptContent: 'Remove-AzResource -Id $env:resourceId -Force'
+    azPowerShellVersion: '9.7'
+    retentionInterval: 'PT1H'
     timeout: 'PT30M'
     cleanupPreference: 'OnSuccess'
-    retentionInterval: 'PT1H'
-    environmentVariables: [
-      {
-        name: 'resourceId'
-        value: tempEventGridNamespace.id
-      }
-    ]
+    environmentVariables: {
+      secureList: [
+        {
+          name: 'resourceId'
+          value: tempEventGridNamespace.id
+        }
+      ]
+    }
+    scriptContent: 'Remove-AzResource -Id $env:resourceId -Force'
+    subnetResourceIds: (networkingOption == 'Public') ? [] : (networkingOption == 'Private') ? [vnet.outputs.subnetResourceIds[1]] : [scriptsSubnetResourceId]
+    storageAccountResourceId: (networkingOption == 'Public') ? null : dsStorageAccount.outputs.resourceId
+
   }
 }
-
 //------------------------------------------------------------------------------
 // ADLSv2 storage account for staging and archive
 //------------------------------------------------------------------------------
